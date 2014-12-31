@@ -11,7 +11,7 @@
     },
     "autoload": {
         "psr-4": {
-            "letyii\\rbac-mongodb\\": ""
+            "letyii\\rbacmongodb\\": ""
         }
     }
 }
