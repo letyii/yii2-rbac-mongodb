@@ -291,7 +291,7 @@ class MongodbManager extends BaseManager
 
         // Get Item name
         $itemName = [];
-        $query = (new Query())->select('item_name')
+        $query = (new Query())->select(['item_name'])
             ->from($this->assignmentTable)
             ->where(['user_id' => (string)$userId]);
         foreach ($query->all($this->db) as $row) {
