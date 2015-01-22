@@ -17,6 +17,10 @@ use yii\db\Expression;
 use yii\di\Instance;
 use yii\base\InvalidCallException;
 use yii\base\InvalidParamException;
+use yii\rbac\Assignment;
+use yii\rbac\Item;
+use yii\rbac\Permission;
+use yii\rbac\Role;
 
 class MongodbManager extends BaseManager
 {
@@ -155,7 +159,7 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     protected function removeItem($item) {
-        $this->db->getCollection($this->itemChildTable)->remove(['or', 'parent=:name', 'child=:name'], [':name' => $item->name]);
+        $this->db->getCollection($this->itemChildTable)->remove(['or', ['parent' => $item->name], ['child' => $item->name]]);
         $this->db->getCollection($this->assignmentTable)->remove(['item_name' => $item->name]);
         $this->db->getCollection($this->itemTable)->remove(['name' => $item->name]);
         return true;
@@ -287,7 +291,7 @@ class MongodbManager extends BaseManager
 
         // Get Item name
         $itemName = [];
-        $query = (new Query())->select('item_name')
+        $query = (new Query())->select(['item_name'])
             ->from($this->assignmentTable)
             ->where(['user_id' => (string)$userId]);
         foreach ($query->all($this->db) as $row) {
