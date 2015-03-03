@@ -17,6 +17,10 @@ use yii\db\Expression;
 use yii\di\Instance;
 use yii\base\InvalidCallException;
 use yii\base\InvalidParamException;
+use yii\rbac\Assignment;
+use yii\rbac\Item;
+use yii\rbac\Permission;
+use yii\rbac\Role;
 
 class MongodbManager extends BaseManager
 {
@@ -155,7 +159,7 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     protected function removeItem($item) {
-        $this->db->getCollection($this->itemChildTable)->remove(['or', 'parent=:name', 'child=:name'], [':name' => $item->name]);
+        $this->db->getCollection($this->itemChildTable)->remove(['or', ['parent' => $item->name], ['child' => $item->name]]);
         $this->db->getCollection($this->assignmentTable)->remove(['item_name' => $item->name]);
         $this->db->getCollection($this->itemTable)->remove(['name' => $item->name]);
         return true;
@@ -287,7 +291,7 @@ class MongodbManager extends BaseManager
 
         // Get Item name
         $itemName = [];
-        $query = (new Query())->select('item_name')
+        $query = (new Query())->select(['item_name'])
             ->from($this->assignmentTable)
             ->where(['user_id' => (string)$userId]);
         foreach ($query->all($this->db) as $row) {
@@ -649,5 +653,92 @@ class MongodbManager extends BaseManager
      */
     public function removeAllAssignments() {
         $this->db->getCollection($this->assignmentTable)->drop();
+    }
+    
+    public function checkItemExist($name) {
+        if ($this->getItem($name) === null)
+            return false;
+        else
+            return true;
+    }
+    
+    /**
+     * Build tree role
+     * @param string $role
+     * @return array
+     */
+//    public function buildTreeRole($role = NULL) {
+//        // Get tree item
+//        $treeItem = $this->buildTree($role);
+//        $roleList = array_keys($this->getRoles());
+//        return $this->filterRole($treeItem, $roleList);
+//    }
+
+    /**
+     * Build tree from item table
+     * @param string $item
+     * @param integer $level
+     * @return array
+     */
+    public function buildTreeRole($item = NULL, $roleList = []) {
+        $tree = [];
+        $allParents = [];
+        if (empty($roleList))
+            $roleList = $this->getRoles();
+        
+        if ($item == NULL) {
+            // Get all children
+            $childRoles = [];
+            $query = (new Query)->select(['child'])
+                ->from($this->itemChildTable)
+                ->where([]);
+            foreach ($query->all($this->db) as $key => $value) {
+                $childRoles[] = $value['child'];
+            }
+            
+            // Get all roles
+            $query = (new Query)->select(['name'])
+                ->from($this->itemTable)
+                ->where(['type' => 1]);
+            foreach ($query->all($this->db) as $key => $value) {
+                if (!in_array($value['name'], $childRoles))
+                    $allParents[] = $value;
+            }
+        }
+        if (!empty($allParents)) {
+            foreach ($allParents as $parent) {
+                $tree[$parent['name']] = [
+                    'title' => $roleList[$parent['name']]->description,
+                    'items' => $this->buildTreeRole($parent['name'], $roleList),
+                ];
+            }
+        } else {
+            // Get
+            $childs = (new Query)->select(['child'])
+                ->from($this->itemChildTable)
+                ->where(['parent' => $item])
+                ->all($this->db);
+            foreach ($childs as $child) {
+                $tree[$child['child']] = [
+                    'title' => $roleList[$child['child']]->description,
+                    'items' => $this->buildTreeRole($child['child'], $roleList),
+                ];
+            }
+        }
+        return $tree;
+    }
+
+//    private function filterRole($items, $roles) {
+//        foreach ($items as $item => $child) {
+//            if (!in_array($item, $roles))
+//                unset ($items[$item]);
+//            else
+//                $items[$item] = $this->filterRole($child, $roles);
+//        }
+//        return $items;
+//    }
+    
+    private function filterRole($items, $roles) {
+        
     }
 }
