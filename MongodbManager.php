@@ -461,6 +461,27 @@ class MongodbManager extends BaseManager
     }
 
     /**
+     * Return all user assigment information for the specified role
+     * @param string $roleName the role name
+     * @return The assignment information. An empty array will be returned if there is no user assigned to the role.
+     */
+    public function getRoleAssigments($roleName) {
+        $query = (new Query)->from($this->assignmentTable)
+            ->where(['item_name' => $roleName]);
+
+        $assignments = [];
+        foreach ($query->all($this->db) as $row) {
+            $assignments[$row['user_id']] = new Assignment([
+                'userId' => $row['user_id'],
+                'roleName' => $row['item_name'],
+                'createdAt' => $row['created_at'],
+            ]);
+        }
+
+        return $assignments;
+    }
+
+    /**
      * @inheritdoc
      */
     public function addChild($parent, $child) {
@@ -517,7 +538,7 @@ class MongodbManager extends BaseManager
             ->from($this->itemChildTable)
             ->where(['parent'=>$name])
             ->all($this->db));
-        
+
         $query = (new Query)
             ->select(['name', 'type', 'description', 'rule_name', 'data', 'created_at', 'updated_at'])
             ->from($this->itemTable)
