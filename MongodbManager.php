@@ -170,21 +170,19 @@ class MongodbManager extends BaseManager
      */
     protected function updateItem($name, $item) {
         if ($item->name !== $name) {
-            $this->db->getCollection($this->itemChildTable)->update(['parent' => $item->name], ['parent' => $name]);
-            $this->db->getCollection($this->itemChildTable)->update(['child' => $item->name], ['child' => $name]);
-            $this->db->getCollection($this->assignmentTable)->update(['item_name' => $item->name], ['item_name' => $name]);
+            $this->db->getCollection($this->itemChildTable)->update(['parent' => $name], ['parent' => $item->name]);
+            $this->db->getCollection($this->itemChildTable)->update(['child' => $name], ['child' => $item->name]);
+            $this->db->getCollection($this->assignmentTable)->update(['item_name' => $name], ['item_name' => $item->name]);
         }
 
         $item->updatedAt = time();
 
-        $this->db->getCollection($this->itemTable)->update([
+        $this->db->getCollection($this->itemTable)->update(['name' => $name], [
             'name' => $item->name,
             'description' => $item->description,
             'rule_name' => $item->ruleName,
             'data' => $item->data === null ? null : serialize($item->data),
             'updated_at' => $item->updatedAt,
-        ], [
-            'name' => $name,
         ]);
         return true;
     }
@@ -217,17 +215,15 @@ class MongodbManager extends BaseManager
     protected function updateRule($name, $rule) {
         if ($rule->name !== $name) {
             $this->db->getCollection($this->itemTable)
-                ->update(['rule_name' => $rule->name], ['rule_name' => $name]);
+                ->update(['rule_name' => $name], ['rule_name' => $rule->name]);
         }
 
         $rule->updatedAt = time();
 
-        $this->db->getCollection($this->ruleTable)->update([
+        $this->db->getCollection($this->ruleTable)->update(['name' => $name], [
             'name' => $rule->name,
             'data' => serialize($rule),
             'updated_at' => $rule->updatedAt,
-        ], [
-            'name' => $name,
         ]);
 
         return true;
@@ -465,6 +461,27 @@ class MongodbManager extends BaseManager
     }
 
     /**
+     * Return all user assigment information for the specified role
+     * @param string $roleName the role name
+     * @return The assignment information. An empty array will be returned if there is no user assigned to the role.
+     */
+    public function getRoleAssigments($roleName) {
+        $query = (new Query)->from($this->assignmentTable)
+            ->where(['item_name' => $roleName]);
+
+        $assignments = [];
+        foreach ($query->all($this->db) as $row) {
+            $assignments[$row['user_id']] = new Assignment([
+                'userId' => $row['user_id'],
+                'roleName' => $row['item_name'],
+                'createdAt' => $row['created_at'],
+            ]);
+        }
+
+        return $assignments;
+    }
+
+    /**
      * @inheritdoc
      */
     public function addChild($parent, $child) {
@@ -516,10 +533,16 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function getChildren($name) {
+        $names = array_map(create_function('$v', 'return $v["child"];'), (new Query)
+            ->select(['child'])
+            ->from($this->itemChildTable)
+            ->where(['parent'=>$name])
+            ->all($this->db));
+
         $query = (new Query)
             ->select(['name', 'type', 'description', 'rule_name', 'data', 'created_at', 'updated_at'])
-            ->from([$this->itemTable, $this->itemChildTable])
-            ->where(['parent' => $name, 'name' => new Expression('child')]);
+            ->from($this->itemTable)
+            ->where(['name'=>$names]);
 
         $children = [];
         foreach ($query->all($this->db) as $row) {
@@ -644,7 +667,7 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function removeAllRules() {
-        $this->db->getCollection($this->itemTable)->update([], ['ruleName' => null]);
+        $this->db->getCollection($this->itemTable)->update(['ruleName' => null], []);
         $this->db->getCollection($this->ruleTable)->drop();
     }
 
