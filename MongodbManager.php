@@ -663,18 +663,6 @@ class MongodbManager extends BaseManager
     }
     
     /**
-     * Build tree role
-     * @param string $role
-     * @return array
-     */
-//    public function buildTreeRole($role = NULL) {
-//        // Get tree item
-//        $treeItem = $this->buildTree($role);
-//        $roleList = array_keys($this->getRoles());
-//        return $this->filterRole($treeItem, $roleList);
-//    }
-
-    /**
      * Build tree from item table
      * @param string $item
      * @param integer $level
@@ -726,19 +714,5 @@ class MongodbManager extends BaseManager
             }
         }
         return $tree;
-    }
-
-//    private function filterRole($items, $roles) {
-//        foreach ($items as $item => $child) {
-//            if (!in_array($item, $roles))
-//                unset ($items[$item]);
-//            else
-//                $items[$item] = $this->filterRole($child, $roles);
-//        }
-//        return $items;
-//    }
-    
-    private function filterRole($items, $roles) {
-        
     }
 }
