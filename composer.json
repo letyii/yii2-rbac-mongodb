@@ -1,7 +1,7 @@
 {
     "name": "letyii/yii2-rbac-mongodb",
     "description": "RBAC Mongodb for Yiiframework 2",
-    "homepage": "https://github.com/letyii/yii2-tinymce",
+    "homepage": "https://github.com/letyii/yii2-rbac-mongodb",
     "keywords": ["yii2","mongodb","rbac"],
     "license": "MIT",
     "minimum-stability": "beta",
