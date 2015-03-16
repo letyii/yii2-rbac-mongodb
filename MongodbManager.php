@@ -53,6 +53,11 @@ class MongodbManager extends BaseManager
     public $ruleTable = 'auth_rule';
 
     /**
+     * God Id always access
+     */
+    public $god_id = null;
+ 
+    /**
      * Initializes the application component.
      * This method overrides the parent implementation by establishing the database connection.
      */
@@ -67,6 +72,8 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function checkAccess($userId, $permissionName, $params = []) {
+        if (!empty($this->god_id) AND $this->god_id == (string) $userId)
+            return true;
         $assignments = $this->getAssignments($userId);
         return $this->checkAccessRecursive($userId, $permissionName, $params, $assignments);
     }
