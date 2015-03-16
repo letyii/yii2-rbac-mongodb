@@ -170,21 +170,19 @@ class MongodbManager extends BaseManager
      */
     protected function updateItem($name, $item) {
         if ($item->name !== $name) {
-            $this->db->getCollection($this->itemChildTable)->update(['parent' => $item->name], ['parent' => $name]);
-            $this->db->getCollection($this->itemChildTable)->update(['child' => $item->name], ['child' => $name]);
-            $this->db->getCollection($this->assignmentTable)->update(['item_name' => $item->name], ['item_name' => $name]);
+            $this->db->getCollection($this->itemChildTable)->update(['parent' => $name], ['parent' => $item->name]);
+            $this->db->getCollection($this->itemChildTable)->update(['child' => $name], ['child' => $item->name]);
+            $this->db->getCollection($this->assignmentTable)->update(['item_name' => $name], ['item_name' => $item->name]);
         }
 
         $item->updatedAt = time();
 
-        $this->db->getCollection($this->itemTable)->update([
+        $this->db->getCollection($this->itemTable)->update(['name' => $name], [
             'name' => $item->name,
             'description' => $item->description,
             'rule_name' => $item->ruleName,
             'data' => $item->data === null ? null : serialize($item->data),
             'updated_at' => $item->updatedAt,
-        ], [
-            'name' => $name,
         ]);
         return true;
     }
@@ -217,17 +215,15 @@ class MongodbManager extends BaseManager
     protected function updateRule($name, $rule) {
         if ($rule->name !== $name) {
             $this->db->getCollection($this->itemTable)
-                ->update(['rule_name' => $rule->name], ['rule_name' => $name]);
+                ->update(['rule_name' => $name], ['rule_name' => $rule->name]);
         }
 
         $rule->updatedAt = time();
 
-        $this->db->getCollection($this->ruleTable)->update([
+        $this->db->getCollection($this->ruleTable)->update(['name' => $name], [
             'name' => $rule->name,
             'data' => serialize($rule),
             'updated_at' => $rule->updatedAt,
-        ], [
-            'name' => $name,
         ]);
 
         return true;
@@ -400,7 +396,7 @@ class MongodbManager extends BaseManager
             ->from($this->ruleTable)
             ->where(['name' => $name])
             ->one($this->db);
-        return $row === false ? null : unserialize($row['data']);
+        return $row === false ? null : @unserialize($row['data']);
     }
 
     /**
@@ -411,7 +407,7 @@ class MongodbManager extends BaseManager
 
         $rules = [];
         foreach ($query->all($this->db) as $row) {
-            $rules[$row['name']] = unserialize($row['data']);
+            $rules[$row['name']] = @unserialize($row['data']);
         }
 
         return $rules;
@@ -465,6 +461,27 @@ class MongodbManager extends BaseManager
     }
 
     /**
+     * Return all user assigment information for the specified role
+     * @param string $roleName the role name
+     * @return The assignment information. An empty array will be returned if there is no user assigned to the role.
+     */
+    public function getRoleAssigments($roleName) {
+        $query = (new Query)->from($this->assignmentTable)
+            ->where(['item_name' => $roleName]);
+
+        $assignments = [];
+        foreach ($query->all($this->db) as $row) {
+            $assignments[$row['user_id']] = new Assignment([
+                'userId' => $row['user_id'],
+                'roleName' => $row['item_name'],
+                'createdAt' => $row['created_at'],
+            ]);
+        }
+
+        return $assignments;
+    }
+
+    /**
      * @inheritdoc
      */
     public function addChild($parent, $child) {
@@ -490,16 +507,59 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function removeChild($parent, $child) {
+        $parentName = is_object($parent) ? $parent->name : $parent;
+        $childName = is_object($child) ? $child->name : $child;
         return $this->db->getCollection($this->itemChildTable)
-            ->remove(['parent' => $parent->name, 'child' => $child->name]) === true;
+            ->remove(['parent' => $parentName, 'child' => $childName]) === true;
     }
 
     /**
      * @inheritdoc
      */
     public function removeChildren($parent) {
+        $parentName = is_object($parent) ? $parent->name : $parent;
         return $this->db->getCollection($this->itemChildTable)
-            ->remove(['parent' => $parent->name]) === true;
+            ->remove(['parent' => $parentName]) === true;
+    }
+    
+    public function removeChildrenByType($parent, $type = null) {
+        if (empty($type))
+            return FALSE;
+        
+        $parentName = is_object($parent) ? $parent->name : $parent;
+        
+        // Get all children, included role and permission
+        $children = (new Query)
+            ->select(['child'])
+            ->from($this->itemChildTable)
+            ->where(['parent'=>$parentName])
+            ->all($this->db);
+        if ($children) 
+            $children = \yii\helpers\ArrayHelper::map ($children, '_id', 'child');
+        else
+            $children = [];
+        
+        // Get all items by type
+        $items = (new Query)
+            ->select(['name'])
+            ->from($this->itemTable)
+            ->where(['type' => $type])
+            ->all($this->db);
+        
+        $removeChildren = [];
+        foreach ($items as $item) {
+            if (in_array($item['name'], $children)) {
+                $removeChildren[] = $item['name'];
+            }
+        }
+        
+        // Delete all child in parent
+        foreach ($removeChildren as $removeChild) {
+            $this->removeChild($parentName, $removeChild);
+        }
+        
+//        return $this->db->getCollection($this->itemChildTable)
+//            ->remove(['parent' => $parent->name]) === true;
     }
     
     /**
@@ -516,10 +576,16 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function getChildren($name) {
+        $names = array_map(create_function('$v', 'return $v["child"];'), (new Query)
+            ->select(['child'])
+            ->from($this->itemChildTable)
+            ->where(['parent'=>$name])
+            ->all($this->db));
+
         $query = (new Query)
             ->select(['name', 'type', 'description', 'rule_name', 'data', 'created_at', 'updated_at'])
-            ->from([$this->itemTable, $this->itemChildTable])
-            ->where(['parent' => $name, 'name' => new Expression('child')]);
+            ->from($this->itemTable)
+            ->where(['name'=>$names]);
 
         $children = [];
         foreach ($query->all($this->db) as $row) {
@@ -575,11 +641,12 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function revoke($role, $userId) {
+        $roleName = is_object($role) ? $role->name : $role;
         if (empty($userId)) {
             return false;
         }
 
-        return $this->db->getCollection($this->assignmentTable)->remove(['user_id' => (string)$userId, 'item_name' => $role->name]) === true;
+        return $this->db->getCollection($this->assignmentTable)->remove(['user_id' => (string)$userId, 'item_name' => $roleName]) === true;
     }
 
     /**
@@ -644,7 +711,7 @@ class MongodbManager extends BaseManager
      * @inheritdoc
      */
     public function removeAllRules() {
-        $this->db->getCollection($this->itemTable)->update([], ['ruleName' => null]);
+        $this->db->getCollection($this->itemTable)->update(['ruleName' => null], []);
         $this->db->getCollection($this->ruleTable)->drop();
     }
 
@@ -706,7 +773,17 @@ class MongodbManager extends BaseManager
                 ->from($this->itemChildTable)
                 ->where(['parent' => $item])
                 ->all($this->db);
+            
+            // lấy ra name của các role gán vào mảng mới.
+            $checkRole = [];
+            foreach ($roleList as $v) {
+                $checkRole[] = $v->name;
+            }
+            
             foreach ($childs as $child) {
+                // Nếu item là permission thì bỏ qua.
+                if (!in_array($child['child'], $checkRole))
+                    continue;
                 $tree[$child['child']] = [
                     'title' => $roleList[$child['child']]->description,
                     'items' => $this->buildTreeRole($child['child'], $roleList),
