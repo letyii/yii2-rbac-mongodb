@@ -799,4 +799,22 @@ class MongodbManager extends BaseManager
         }
         return $tree;
     }
+	
+    public function getUserIdsByRole($roleName)
+    {
+        if (empty($roleName)) {
+            return [];
+        }
+
+        $users = (new \yii\mongodb\Query())
+            ->select(['user_id'])
+            ->from($this->assignmentTable)
+            ->where(['item_name' => $roleName])->all();
+
+        if (empty($users)) {
+            return [];
+        }
+
+        return \yii\helpers\ArrayHelper::getColumn($users, 'user_id');
+    }	
 }
