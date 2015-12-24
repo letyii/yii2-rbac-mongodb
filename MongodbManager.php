@@ -341,14 +341,14 @@ class MongodbManager extends BaseManager
             return [];
         }
 
-        $query = (new Query)->select('item_name')
+        $query = (new Query)->select(['item_name'])
             ->from($this->assignmentTable)
             ->where(['user_id' => (string)$userId]);
 
         $childrenList = $this->getChildrenList();
         $result = [];
         foreach ($query->all($this->db) as $role) {
-            $this->getChildrenRecursive($roleName['item_name'], $childrenList, $result);
+            $this->getChildrenRecursive($role['item_name'], $childrenList, $result);
         }
 
         if (empty($result)) {
