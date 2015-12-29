@@ -793,4 +793,22 @@ class MongodbManager extends BaseManager
         $this->db->getCollection($this->assignmentTable)->remove(['item_name' => $names]);
         $this->db->getCollection($this->itemTable)->remove(['type' => $type]);
     }
+
+    /**
+     * Returns all role assignment information for the specified role.
+     * @param string $roleName
+     * @return Assignment[] the assignments. An empty array will be
+     * returned if role is not assigned to any user.
+     * @since 2.0.7
+     */
+    public function getUserIdsByRole($roleName)
+    {
+        if (empty($roleName)) {
+            return [];
+        }
+
+        return (new Query)->select('[[user_id]]')
+            ->from($this->assignmentTable)
+            ->where(['item_name' => $roleName])->column($this->db);
+    }
 }
