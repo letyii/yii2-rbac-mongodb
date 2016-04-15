@@ -487,6 +487,14 @@ class MongodbManager extends BaseManager
 
         return $assignments;
     }
+	
+    /**
+     * @inheritdoc
+     */
+    public function canAddChild($parent, $child)
+    {
+        return !$this->detectLoop($parent, $child);
+    }	
 
     /**
      * @inheritdoc
