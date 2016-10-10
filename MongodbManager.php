@@ -41,7 +41,7 @@ class MongodbManager extends BaseManager
      * @var string the name of the table storing authorization item hierarchy. Defaults to "auth_item_child".
      */
     public $itemChildTable = 'auth_item_child';
-    
+
     /**
      * @var string the name of the table storing authorization item assignments. Defaults to "auth_assignment".
      */
@@ -56,7 +56,7 @@ class MongodbManager extends BaseManager
      * God Id always access
      */
     public $god_id = null;
- 
+
     /**
      * Initializes the application component.
      * This method overrides the parent implementation by establishing the database connection.
@@ -77,7 +77,7 @@ class MongodbManager extends BaseManager
         $assignments = $this->getAssignments($userId);
         return $this->checkAccessRecursive($userId, $permissionName, $params, $assignments);
     }
-    
+
     /**
      * Performs access check for the specified user.
      * This method is internally called by [[checkAccess()]].
@@ -244,7 +244,7 @@ class MongodbManager extends BaseManager
         $this->db->getCollection($this->ruleTable)->remove(['name' => $rule->name]);
         return true;
     }
-    
+
     /**
      * @inheritdoc
      */
@@ -283,7 +283,7 @@ class MongodbManager extends BaseManager
             'updatedAt' => $row['updated_at'],
         ]);
     }
-    
+
     /**
      * @inheritdoc
      */
@@ -300,7 +300,7 @@ class MongodbManager extends BaseManager
         foreach ($query->all($this->db) as $row) {
             $itemName[] = $row['item_name'];
         }
-        
+
         // Get Roles
         $roles = [];
         $query = (new Query)->from($this->itemTable)
@@ -308,10 +308,33 @@ class MongodbManager extends BaseManager
         foreach ($query->all($this->db) as $row) {
             $roles[$row['name']] = $this->populateItem($row);
         }
-        
+
         return $roles;
     }
-    
+
+    /**
+     * @inheritdoc
+     */
+    public function getChildRoles($roleName)
+    {
+        $role = $this->getRole($roleName);
+
+        if (is_null($role)) {
+            throw new InvalidParamException("Role \"$roleName\" not found.");
+        }
+
+        /** @var $result Item[] */
+        $this->getChildrenRecursive($roleName, $this->getChildrenList(), $result);
+
+        $roles = [$roleName => $role];
+
+        $roles += array_filter($this->getRoles(), function (Role $roleItem) use ($result) {
+            return array_key_exists($roleItem->name, $result);
+        });
+
+        return $roles;
+    }
+
     /**
      * @inheritdoc
      */
@@ -435,7 +458,7 @@ class MongodbManager extends BaseManager
         if ($row === false) {
             return null;
         }
-        
+
         return new Assignment([
             'userId' => $row['user_id'],
             'roleName' => $row['item_name'],
@@ -487,14 +510,14 @@ class MongodbManager extends BaseManager
 
         return $assignments;
     }
-	
+
     /**
      * @inheritdoc
      */
     public function canAddChild($parent, $child)
     {
         return !$this->detectLoop($parent, $child);
-    }	
+    }
 
     /**
      * @inheritdoc
@@ -536,47 +559,47 @@ class MongodbManager extends BaseManager
         return $this->db->getCollection($this->itemChildTable)
             ->remove(['parent' => $parentName]) === true;
     }
-    
+
     public function removeChildrenByType($parent, $type = null) {
         if (empty($type))
             return FALSE;
-        
+
         $parentName = is_object($parent) ? $parent->name : $parent;
-        
+
         // Get all children, included role and permission
         $children = (new Query)
             ->select(['child'])
             ->from($this->itemChildTable)
             ->where(['parent'=>$parentName])
             ->all($this->db);
-        if ($children) 
+        if ($children)
             $children = \yii\helpers\ArrayHelper::map ($children, '_id', 'child');
         else
             $children = [];
-        
+
         // Get all items by type
         $items = (new Query)
             ->select(['name'])
             ->from($this->itemTable)
             ->where(['type' => $type])
             ->all($this->db);
-        
+
         $removeChildren = [];
         foreach ($items as $item) {
             if (in_array($item['name'], $children)) {
                 $removeChildren[] = $item['name'];
             }
         }
-        
+
         // Delete all child in parent
         foreach ($removeChildren as $removeChild) {
             $this->removeChild($parentName, $removeChild);
         }
-        
+
 //        return $this->db->getCollection($this->itemChildTable)
 //            ->remove(['parent' => $parent->name]) === true;
     }
-    
+
     /**
      * @inheritdoc
      */
@@ -609,7 +632,7 @@ class MongodbManager extends BaseManager
 
         return $children;
     }
-    
+
     /**
      * Checks whether there is a loop in the authorization item hierarchy.
      * @param Item $parent the parent item
@@ -637,9 +660,9 @@ class MongodbManager extends BaseManager
             'roleName' => $role->name,
             'createdAt' => time(),
         ]);
-        
+
         $assign = (new Query())->from($this->assignmentTable)->where(['user_id' => $assignment->userId, 'item_name' => $assignment->roleName])->one($this->db);
-        
+
         if (!$assign) {
             $this->db->getCollection($this->assignmentTable)
                 ->insert([
@@ -651,7 +674,7 @@ class MongodbManager extends BaseManager
 
         return $assignment;
     }
-    
+
     /**
      * @inheritdoc
      */
@@ -736,14 +759,14 @@ class MongodbManager extends BaseManager
     public function removeAllAssignments() {
         $this->db->getCollection($this->assignmentTable)->drop();
     }
-    
+
     public function checkItemExist($name) {
         if ($this->getItem($name) === null)
             return false;
         else
             return true;
     }
-    
+
     /**
      * Build tree from item table
      * @param string $item
@@ -755,7 +778,7 @@ class MongodbManager extends BaseManager
         $allParents = [];
         if (empty($roleList))
             $roleList = $this->getRoles();
-        
+
         if ($item == NULL) {
             // Get all children
             $childRoles = [];
@@ -765,7 +788,7 @@ class MongodbManager extends BaseManager
             foreach ($query->all($this->db) as $key => $value) {
                 $childRoles[] = $value['child'];
             }
-            
+
             // Get all roles
             $query = (new Query)->select(['name'])
                 ->from($this->itemTable)
@@ -788,13 +811,13 @@ class MongodbManager extends BaseManager
                 ->from($this->itemChildTable)
                 ->where(['parent' => $item])
                 ->all($this->db);
-            
+
             // lấy ra name của các role gán vào mảng mới.
             $checkRole = [];
             foreach ($roleList as $v) {
                 $checkRole[] = $v->name;
             }
-            
+
             foreach ($childs as $child) {
                 // Nếu item là permission thì bỏ qua.
                 if (!in_array($child['child'], $checkRole))
@@ -807,7 +830,7 @@ class MongodbManager extends BaseManager
         }
         return $tree;
     }
-	
+
     public function getUserIdsByRole($roleName)
     {
         if (empty($roleName)) {
@@ -824,5 +847,5 @@ class MongodbManager extends BaseManager
         }
 
         return \yii\helpers\ArrayHelper::getColumn($users, 'user_id');
-    }	
+    }
 }
