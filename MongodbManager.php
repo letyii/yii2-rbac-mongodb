@@ -13,6 +13,7 @@ use Yii;
 use yii\base\InvalidCallException;
 use yii\base\InvalidParamException;
 use yii\di\Instance;
+use yii\mongodb\Cache;
 use yii\mongodb\Connection;
 use yii\mongodb\Query;
 use yii\rbac\Assignment;
@@ -60,6 +61,46 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	public $god_id = null;
 
 	/**
+	 * @var Cache|array|string the cache used to improve RBAC performance. This can be one of the following:
+	 *
+	 * - an application component ID (e.g. `cache`)
+	 * - a configuration array
+	 * - a [[\yii\caching\Cache]] object
+	 *
+	 * When this is not set, it means caching is not enabled.
+	 *
+	 * Note that by enabling RBAC cache, all auth items, rules and auth item parent-child relationships will
+	 * be cached and loaded into memory. This will improve the performance of RBAC permission check. However,
+	 * it does require extra memory and as a result may not be appropriate if your RBAC system contains too many
+	 * auth items. You should seek other RBAC implementations (e.g. RBAC based on Redis storage) in this case.
+	 *
+	 * Also note that if you modify RBAC items, rules or parent-child relationships from outside of this component,
+	 * you have to manually call [[invalidateCache()]] to ensure data consistency.
+	 *
+	 * @since 2.0.3
+	 */
+	public $cache;
+
+	/**
+	 * @var string the key used to store RBAC data in cache
+	 * @see cache
+	 * @since 2.0.3
+	 */
+	public $cacheKey = 'rbac';
+	/**
+	 * @var Item[] all auth items (name => Item)
+	 */
+	protected $items;
+	/**
+	 * @var Rule[] all auth rules (name => Rule)
+	 */
+	protected $rules;
+	/**
+	 * @var array auth item parent-child relationships (childName => list of parents)
+	 */
+	protected $parents;
+
+	/**
 	 * Initializes the application component.
 	 * This method overrides the parent implementation by establishing the database connection.
 	 */
@@ -69,6 +110,9 @@ class MongodbManager extends BaseManager implements ManagerInterface
 		$this->db = Instance::ensure($this->db, Connection::className());
 		$this->db->getCollection($this->itemTable)->createIndex(['name' => 1], ['unique' => true]);
 		$this->db->getCollection($this->ruleTable)->createIndex(['name' => 1], ['unique' => true]);
+		if ($this->cache !== null) {
+			$this->cache = Instance::ensure($this->cache, Cache::className());
+		}
 	}
 
 	/**
@@ -138,6 +182,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 				'updated_at' => $item->updatedAt,
 			]);
 
+		$this->invalidateCache();
+
 		return true;
 	}
 
@@ -164,6 +210,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 				'updated_at' => $rule->updatedAt,
 			]);
 
+		$this->invalidateCache();
+
 		return true;
 	}
 
@@ -179,6 +227,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 		$this->db->getCollection($this->assignmentTable)->remove(['item_name' => $item->name]);
 		$this->db->getCollection($this->itemTable)->remove(['name' => $item->name]);
 
+		$this->invalidateCache();
+
 		return true;
 	}
 
@@ -192,6 +242,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	{
 		$this->db->getCollection($this->itemTable)->remove(['rule_name' => $rule->name]);
 		$this->db->getCollection($this->ruleTable)->remove(['name' => $rule->name]);
+
+		$this->invalidateCache();
 
 		return true;
 	}
@@ -221,6 +273,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 			'updated_at' => $item->updatedAt,
 		]);
 
+		$this->invalidateCache();
+
 		return true;
 	}
 
@@ -246,6 +300,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 			'updated_at' => $rule->updatedAt,
 		]);
 
+		$this->invalidateCache();
+
 		return true;
 	}
 
@@ -265,7 +321,12 @@ class MongodbManager extends BaseManager implements ManagerInterface
 			return true;
 		$assignments = $this->getAssignments($userId);
 
-		return $this->checkAccessRecursive($userId, $permissionName, $params, $assignments);
+		$this->loadFromCache();
+		if ($this->items !== null) {
+			return $this->checkAccessFromCache($userId, $permissionName, $params, $assignments);
+		} else {
+			return $this->checkAccessRecursive($userId, $permissionName, $params, $assignments);
+		}
 	}
 
 	/**
@@ -417,6 +478,15 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	}
 
 	/**
+	 * @inheritdoc
+	 * @since 2.0.8
+	 */
+	public function canAddChild($parent, $child)
+	{
+		return !$this->detectLoop($parent, $child);
+	}
+
+	/**
 	 * Adds an item as a child of another item.
 	 * @param Item $parent
 	 * @param Item $child
@@ -441,6 +511,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 		$this->db->getCollection($this->itemChildTable)
 			->insert(['parent' => $parent->name, 'child' => $child->name]);
 
+		$this->invalidateCache();
+
 		return true;
 	}
 
@@ -456,6 +528,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 		$parentName = is_object($parent) ? $parent->name : $parent;
 		$childName = is_object($child) ? $child->name : $child;
 
+		$this->invalidateCache();
+
 		return $this->db->getCollection($this->itemChildTable)
 			->remove(['parent' => $parentName, 'child' => $childName]) === true;
 	}
@@ -469,6 +543,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	public function removeChildren($parent)
 	{
 		$parentName = is_object($parent) ? $parent->name : $parent;
+
+		$this->invalidateCache();
 
 		return $this->db->getCollection($this->itemChildTable)
 			->remove(['parent' => $parentName]) === true;
@@ -636,9 +712,13 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	public function removeAll()
 	{
 		$this->removeAllAssignments();
-		$this->db->getCollection($this->itemChildTable)->drop();
-		$this->db->getCollection($this->itemTable)->drop();
-		$this->db->getCollection($this->ruleTable)->drop();
+		if ($itemChildTable = $this->db->getCollection($this->itemChildTable))
+			$itemChildTable->drop();
+		if ($itemTable = $this->db->getCollection($this->itemTable))
+			$itemTable->drop();
+		if ($ruleTable = $this->db->getCollection($this->ruleTable))
+			$ruleTable->drop();
+		$this->invalidateCache();
 	}
 
 	/**
@@ -667,6 +747,7 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	{
 		$this->db->getCollection($this->itemTable)->update(['ruleName' => null], []);
 		$this->db->getCollection($this->ruleTable)->drop();
+		$this->invalidateCache();
 	}
 
 	/**
@@ -674,7 +755,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 	 */
 	public function removeAllAssignments()
 	{
-		$this->db->getCollection($this->assignmentTable)->drop();
+		if ($assignmentTable = $this->db->getCollection($this->assignmentTable))
+			$assignmentTable->drop();
 	}
 
 	/**
@@ -816,6 +898,8 @@ class MongodbManager extends BaseManager implements ManagerInterface
 		$this->db->getCollection($this->itemChildTable)->remove([$key => $names]);
 		$this->db->getCollection($this->assignmentTable)->remove(['item_name' => $names]);
 		$this->db->getCollection($this->itemTable)->remove(['type' => $type]);
+
+		$this->invalidateCache();
 	}
 
 	/**
@@ -835,5 +919,89 @@ class MongodbManager extends BaseManager implements ManagerInterface
 			->from($this->assignmentTable)
 			->where(['item_name' => $roleName])
 			->column($this->db);
+	}
+
+	/**
+	 *
+	 */
+	private function invalidateCache()
+	{
+		if ($this->cache !== null) {
+			$this->cache->delete($this->cacheKey);
+			$this->items = null;
+			$this->rules = null;
+			$this->parents = null;
+		}
+	}
+
+	/**
+	 *
+	 */
+	private function loadFromCache()
+	{
+		if ($this->items !== null || !$this->cache instanceof Cache) {
+			return;
+		}
+		$data = $this->cache->get($this->cacheKey);
+		if (is_array($data) && isset($data[0], $data[1], $data[2])) {
+			list ($this->items, $this->rules, $this->parents) = $data;
+
+			return;
+		}
+		$query = (new Query)->from($this->itemTable);
+		$this->items = [];
+		foreach ($query->all($this->db) as $row) {
+			$this->items[$row['name']] = $this->populateItem($row);
+		}
+		$query = (new Query)->from($this->ruleTable);
+		$this->rules = [];
+		foreach ($query->all($this->db) as $row) {
+			$this->rules[$row['name']] = unserialize($row['data']);
+		}
+		$query = (new Query)->from($this->itemChildTable);
+		$this->parents = [];
+		foreach ($query->all($this->db) as $row) {
+			if (isset($this->items[$row['child']])) {
+				$this->parents[$row['child']][] = $row['parent'];
+			}
+		}
+		$this->cache->set($this->cacheKey, [$this->items, $this->rules, $this->parents]);
+	}
+
+	/**
+	 * Performs access check for the specified user based on the data loaded from cache.
+	 * This method is internally called by [[checkAccess()]] when [[cache]] is enabled.
+	 * @param string|integer $user the user ID. This should can be either an integer or a string representing
+	 * the unique identifier of a user. See [[\yii\web\User::id]].
+	 * @param string $itemName the name of the operation that need access check
+	 * @param array $params name-value pairs that would be passed to rules associated
+	 * with the tasks and roles assigned to the user. A param with name 'user' is added to this array,
+	 * which holds the value of `$userId`.
+	 * @param Assignment[] $assignments the assignments to the specified user
+	 * @return boolean whether the operations can be performed by the user.
+	 * @since 2.0.3
+	 */
+	protected function checkAccessFromCache($user, $itemName, $params, $assignments)
+	{
+		if (!isset($this->items[$itemName])) {
+			return false;
+		}
+		$item = $this->items[$itemName];
+		Yii::trace($item instanceof Role ? "Checking role: $itemName" : "Checking permission: $itemName", __METHOD__);
+		if (!$this->executeRule($user, $item, $params)) {
+			return false;
+		}
+		if (isset($assignments[$itemName]) || in_array($itemName, $this->defaultRoles)) {
+			return true;
+		}
+		if (!empty($this->parents[$itemName])) {
+			foreach ($this->parents[$itemName] as $parent) {
+				if ($this->checkAccessFromCache($user, $parent, $params, $assignments)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 }
